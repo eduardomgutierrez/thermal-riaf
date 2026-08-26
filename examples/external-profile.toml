@@ -1,6 +1,6 @@
 [run]
 output_dir = "runs/external-profile"
-omp_threads = 1
+omp_threads = 4
 
 [profile]
 source = "external"
@@ -17,6 +17,7 @@ synchrotron = true
 bremsstrahlung = true
 comptonization = true
 calculate_scattering_matrix = true
+scattering_random_seed = 5489
 
 [grid]
 radius_samples = 50

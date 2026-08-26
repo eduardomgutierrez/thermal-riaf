@@ -17,6 +17,12 @@ class PipelineConfigurationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "profile.source"):
             pipeline.validate({"profile": {"source": "mystery"}})
 
+    def test_parallel_settings_are_validated(self):
+        with self.assertRaisesRegex(ValueError, "omp_threads"):
+            pipeline.validate({"run": {"omp_threads": 0}})
+        with self.assertRaisesRegex(ValueError, "scattering_random_seed"):
+            pipeline.validate({"radiation": {"scattering_random_seed": -1}})
+
     def test_nested_set(self):
         value = {}
         pipeline.nested_set(value, "a.b.c", 4)

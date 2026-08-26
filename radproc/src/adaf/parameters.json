@@ -21,7 +21,8 @@
     "height_method":"1",
     "scatt": {
         "nRandomPhot":"200",
-        "nTheta":"5"
+        "nTheta":"5",
+        "randomSeed":"5489"
     },
     "calculateNewTemp":"0",
 

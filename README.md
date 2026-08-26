@@ -40,9 +40,11 @@ accretion-power sanity check. Machine-readable values are saved in
 reuses it on later runs. Required Compton probability tables are copied into
 each run automatically.
 
-The example defaults to one OpenMP thread. The legacy scattering-matrix routine
-has shared mutable state and can fail nondeterministically with multiple threads;
-do not increase `run.omp_threads` until that routine has been made thread-safe.
+The examples use four OpenMP threads. The Monte Carlo scattering calculation
+uses an independent random-number generator for each radial source cell, seeded
+from `radiation.scattering_random_seed`. Consequently, its result is reproducible
+and independent of the OpenMP thread count. Set `run.omp_threads` to suit the
+machine available to you.
 
 To test only the Python solution and parameter handoff:
 

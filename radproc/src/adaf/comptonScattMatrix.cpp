@@ -13,11 +13,8 @@
 #include <stdio.h>
 #include "write.h"
 
-extern "C" {
-	#include <nrMath/random.h>
-}
-
-#define RANDOM_GENERATOR gsl_rng_r250 /* R250 random number generator from GNU Scientific Library. */
+#include <cstdint>
+#include <gsl/gsl_rng.h>
 
 #include <boost/property_tree/ptree.hpp>
 #include <fparameters/Dimension.h>
@@ -26,6 +23,26 @@ extern "C" {
 #define new_max(x,y) ((x) >= (y)) ? (x) : (y)
 #define new_min(x,y) ((x) <= (y)) ? (x) : (y)
 #define new_abs(x,y) ((x) >= (y)) ?(x-y) : (y-x)
+
+// Give every radial source cell its own deterministic random stream.  Seeding
+// by cell rather than OpenMP thread makes the matrix independent of thread
+// count, scheduling, and execution order.
+static unsigned long scatteringSeed(std::uint64_t masterSeed, std::uint64_t stream)
+{
+	std::uint64_t z = masterSeed + 0x9e3779b97f4a7c15ULL * (stream + 1ULL);
+	z = (z ^ (z >> 30U)) * 0xbf58476d1ce4e5b9ULL;
+	z = (z ^ (z >> 27U)) * 0x94d049bb133111ebULL;
+	z ^= z >> 31U;
+	unsigned long seed = static_cast<unsigned long>(z);
+	return seed == 0UL ? 1UL : seed;
+}
+
+static gsl_rng* scatteringRng(std::uint64_t masterSeed, std::uint64_t stream)
+{
+	gsl_rng* rng = gsl_rng_alloc(gsl_rng_r250);
+	gsl_rng_set(rng, scatteringSeed(masterSeed, stream));
+	return rng;
+}
 
 void comptonScattMatrixWrite()
 {
@@ -42,6 +59,7 @@ void comptonScattMatrix(State& st)
 {
 	size_t nPhot = GlobalConfig.get<size_t>("scatt.nRandomPhot");
 	size_t nTheta = GlobalConfig.get<size_t>("scatt.nTheta");
+	std::uint64_t masterSeed = GlobalConfig.get<std::uint64_t>("scatt.randomSeed", 5489);
     
 	// Use horizonRadius for Kerr black holes (when precomputed ADAF), otherwise schwRadius
 	double innerBoundaryRadius = (readPrecomputedADAF && horizonRadius > 0.0) ? horizonRadius : schwRadius;
@@ -62,14 +80,14 @@ void comptonScattMatrix(State& st)
     escapeAi.resize(nR,0.0);
 	escapeDi.resize(nRcd,0.0);
     
-    InitialiseRandom(RANDOM_GENERATOR);
-	//ADAF SCATTERING MATRIX
+		//ADAF SCATTERING MATRIX
 	
 	double pasoprim = min(pow(rCellsBoundaries[1]/rCellsBoundaries[0],1.0/10.0),
 						1.0+height_fun(st.denf_i.ps[DIM_R][0])/st.denf_i.ps[DIM_R][0]);
 	
 	#pragma omp parallel for
 	for (int iR=0;iR<nR;iR++) {
+		gsl_rng* rng = scatteringRng(masterSeed, static_cast<std::uint64_t>(iR));
 		double r0 = st.denf_e.ps[DIM_R][iR];
 		double thetaMin;
 		if (height_method == 0)
@@ -89,9 +107,9 @@ void comptonScattMatrix(State& st)
 				z0 = r0/tan(theta0);
 			}
 			for(size_t jPh=1;jPh<=nPhot;jPh++) {
-				double random_number = gsl_rng_uniform(RandomNumberGenerator);
+				double random_number = gsl_rng_uniform(rng);
 				double phiprim = 2.0*pi*random_number;
-				random_number = gsl_rng_uniform(RandomNumberGenerator);
+				random_number = gsl_rng_uniform(rng);
 				double thetaprim = acos(1.0-2.0*random_number);   // Photon directions
 																  // distributed
 																  // isotropically.
@@ -152,6 +170,7 @@ void comptonScattMatrix(State& st)
 		for (size_t jRcd=0;jRcd<nRcd;jRcd++) {
 			reachAD[iR][jRcd] /= (nPhot*nTheta);
 		}
+		gsl_rng_free(rng);
 	}
 	
 	//////////////////////////////////////////////////////////////////////////////////////
@@ -215,12 +234,13 @@ void comptonScattMatrix(State& st)
 	// COLD DISK SCATTERING MATRIX
 	#pragma omp parallel for
 	for (int iRcd=0;iRcd<nRcd;iRcd++) {
+		gsl_rng* rng = scatteringRng(masterSeed, 0x100000000ULL + static_cast<std::uint64_t>(iRcd));
 		double r0cd = st.denf_e.ps[DIM_Rcd][iRcd];
 		for(size_t jPh=1;jPh<=nPhot;jPh++) {
 			double drprim = r0cd*(pasoprim-1.0);             // Step for the photon path.
-			double random_number = gsl_rng_uniform(RandomNumberGenerator);
+			double random_number = gsl_rng_uniform(rng);
 			double phiprim = 2.0*pi*random_number;
-			random_number = gsl_rng_uniform(RandomNumberGenerator);
+			random_number = gsl_rng_uniform(rng);
 			double thetaprim = 0.5*acos(1.0-2.0*random_number);   // Photon directions
 																  // distributed
 			double rprim=drprim; 	                           	  // proportional to cos(theta)sin(theta).
@@ -261,18 +281,20 @@ void comptonScattMatrix(State& st)
 			} while(r1aux < rBound && z1 < rBound && r1 > innerBoundaryRadius);
         }
         for(size_t jR=0;jR<nR;jR++) {
-            scattDA[iRcd][jR] /= nPhot;     // Dividing by the number of photons launched.
+			scattDA[iRcd][jR] /= nPhot;     // Dividing by the number of photons launched.
 			reachDA[iRcd][jR] /= nPhot;
-        }
+		}
+		gsl_rng_free(rng);
 	}
 
 	//COLD DISK ESCAPE PHOTONS
 	#pragma omp parallel for
 	for (int iRcd=0;iRcd<nRcd;iRcd++) {
+		gsl_rng* rng = scatteringRng(masterSeed, 0x200000000ULL + static_cast<std::uint64_t>(iRcd));
 		double r0cd = st.denf_e.ps[DIM_Rcd][iRcd];
 		double drprim=r0cd*(pasoprim-1.0);
 		for(size_t jPh=1;jPh<=nPhot;jPh++) {
-			double random_number = gsl_rng_uniform(RandomNumberGenerator);
+			double random_number = gsl_rng_uniform(rng);
 			double phiprim = 2.0*pi*random_number;
 			double thetaprim = inclination*(pi/180.0);
 			double rprim=drprim;
@@ -296,11 +318,11 @@ void comptonScattMatrix(State& st)
 				rprim += drprim;
 			} while(r1aux < rBound && z1 < rBound);     // Escape from the region.
 			escapeDi[iRcd] += pescap;
-        }
-        escapeDi[iRcd] /= nPhot;
+	        }
+	        escapeDi[iRcd] /= nPhot;
+		gsl_rng_free(rng);
 	}
 
-    FinaliseRandom();
 	comptonScattMatrixWrite();
 }
 

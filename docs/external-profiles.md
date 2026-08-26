@@ -59,3 +59,9 @@ It prints the accepted radial range and writes `profile-summary.json`, including
 boundary accretion rates and powers. The profile is then copied into the run
 directory and the same synchrotron, bremsstrahlung, and Compton calculation is
 used as in Python-hydrodynamics mode.
+
+The scattering Monte Carlo is safe to run with multiple OpenMP threads. Set
+`run.omp_threads` for the desired parallelism and keep
+`radiation.scattering_random_seed` fixed when comparing models. Each radial
+cell receives its own deterministic random stream, so changing the thread count
+does not change the resulting scattering matrix.

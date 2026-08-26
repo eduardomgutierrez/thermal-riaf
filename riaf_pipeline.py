@@ -37,6 +37,12 @@ def validate(cfg):
     for name in ("synchrotron", "bremsstrahlung", "comptonization"):
         if not isinstance(cfg.get("radiation", {}).get(name, True), bool):
             raise ValueError(f"radiation.{name} must be true or false")
+    threads = cfg.get("run", {}).get("omp_threads", 4)
+    if isinstance(threads, bool) or not isinstance(threads, int) or threads < 1:
+        raise ValueError("run.omp_threads must be a positive integer")
+    seed = cfg.get("radiation", {}).get("scattering_random_seed", 5489)
+    if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+        raise ValueError("radiation.scattering_random_seed must be a non-negative integer")
 
 
 def validate_external_profile(path, black_hole_mass_msun, spin):
@@ -127,6 +133,7 @@ def prepare_radproc_config(cfg, run_dir, hydro_dir, config_dir=Path.cwd()):
     result["calculateThermal"] = "1"
     result["calculateNonThermal"] = "0"
     result["calculateComptonScatt"] = str(int(radiation.get("calculate_scattering_matrix", True)))
+    result["scatt"]["randomSeed"] = str(radiation.get("scattering_random_seed", 5489))
     result["thermal"]["processes"] = {
         "synchrotron": flags[0],
         "bremsstrahlung": flags[1],
@@ -226,7 +233,7 @@ def main():
     if not executable.is_file():
         raise FileNotFoundError(f"radproc executable not found: {executable}")
     runtime_env = os.environ.copy()
-    runtime_env["OMP_NUM_THREADS"] = str(cfg.get("run", {}).get("omp_threads", 1))
+    runtime_env["OMP_NUM_THREADS"] = str(cfg.get("run", {}).get("omp_threads", 4))
     run([executable], cwd=run_dir, env=runtime_env)
     plot_path = run_dir / "thermal-diagnostics.png"
     plot_env = os.environ.copy()
