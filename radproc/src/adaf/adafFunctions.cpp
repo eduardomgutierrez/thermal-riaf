@@ -1,0 +1,668 @@
+#include "adafFunctions.h"
+#include "globalVariables.h"
+#include "read.h"
+#include "write.h"
+#include <iostream>
+#include <fstream>
+#include <fmath/physics.h>
+#include <fparameters/parameters.h>
+#include <gsl/gsl_sf_bessel.h>
+#include <gsl/gsl_sf_erf.h>
+#include <cstddef>
+#include <fparameters/SpaceIterator.h>
+#include <fparameters/Dimension.h>
+#include <fmath/RungeKutta.h>
+
+using namespace std;
+// Electrons
+
+double electronTemp(double r)
+{
+	// Use precomputed temperature with Te = Ti/R prescription if available
+	if (readPrecomputedADAF && !precomp_r.empty()) {
+		double Ti = precompTemp(r);
+		double beta = precompBeta(r);
+		double beta2 = beta * beta;
+		// R = R_high * (beta^2 / (1 + beta^2)) + 1 / (1 + beta^2)
+		double R = R_high * (beta2 / (1.0 + beta2)) + 1.0 / (1.0 + beta2);
+		return Ti / R;
+	}
+	
+	if (r > exp(logr.back())*schwRadius) return eMeanMolecularWeight*exp(logTe.back());
+	if (r < exp(logr.front())*schwRadius) return eMeanMolecularWeight*exp(logTe.front());
+	double logr_actual = log(r/schwRadius);
+	double aux = logr.front();
+	size_t pos_r = 0;
+	while (aux < logr_actual && pos_r < logr.size()-1) {
+		pos_r++;
+		aux = logr[pos_r];
+	}
+	double m = (logTe[pos_r]-logTe[pos_r-1])/(logr[pos_r]-logr[pos_r-1]);
+	double logT = m*(logr_actual-logr[pos_r-1])+logTe[pos_r-1];
+	double temp = eMeanMolecularWeight*exp(logT);
+	double r_rg = r/gravRadius;
+	//return (r_rg <= 30) ? temp * 1.4/pow(r_rg,0.097) : temp;
+	//double factorTemp = GlobalConfig.get<double>("factorTemperature");
+	return temp;
+}
+
+double electronTempOriginal(double r)
+{
+	double logr_actual = log(r/schwRadius);
+	if (r > exp(logr.back())*schwRadius) return eMeanMolecularWeight*exp(logTe.back());
+	if (r < exp(logr.front())*schwRadius) return eMeanMolecularWeight*exp(logTe.front());
+	double aux = logr.front();
+	size_t pos_r = 0;
+	while (aux < logr_actual && pos_r < logr.size()-1) {
+		pos_r++;
+		aux = logr[pos_r];
+	}
+	double m = (logTe[pos_r]-logTe[pos_r-1])/(logr[pos_r]-logr[pos_r-1]);
+	double logT = m*(logr_actual-logr[pos_r-1])+logTe[pos_r-1];
+	double temp = eMeanMolecularWeight*exp(logT);
+	//double r_rg = r/(schwRadius/2.0);
+	//return (r_rg <= 30) ? temp * 1.4/pow(r_rg,0.097) : temp;
+	return temp;
+}
+
+// Ions
+double ionTemp(double r)
+{
+	// Use precomputed temperature if available (same T for ions and electrons in sol_spin)
+	if (readPrecomputedADAF && !precomp_r.empty()) {
+		return precompTemp(r);
+	}
+	
+	if (r > exp(logr.back())*schwRadius) return iMeanMolecularWeight*exp(logTi.back());
+	if (r < exp(logr.front())*schwRadius) return iMeanMolecularWeight*exp(logTi.front());
+	double logr_actual = log(r/schwRadius);
+	double aux = logr.front();
+	size_t pos_r=0;
+	while (aux < logr_actual && pos_r < logr.size()-1) {
+		pos_r++;
+		aux = logr[pos_r];
+	}
+	double m = (logTi[pos_r]-logTi[pos_r-1])/(logr[pos_r]-logr[pos_r-1]);
+	double logT = m*(logr_actual-logr[pos_r-1])+logTi[pos_r-1];
+	
+	double temp = iMeanMolecularWeight*exp(logT);
+	return temp;
+	//double r_rg = r/(schwRadius/2.0);
+	//return (r_rg <= 30) ? temp * 1.4/pow(r_rg,0.097) : temp;
+}
+
+double radialVel(double r)
+{
+	// Use precomputed velocity if available
+	if (readPrecomputedADAF && !precomp_r.empty()) {
+		return precompRadialVel(r);
+	}
+	
+	double logr_actual = log(r/schwRadius);
+	if (r > exp(logr.back())*schwRadius) return -exp(logv.back());
+	if (r < exp(logr.front())*schwRadius) return -exp(logv.front());
+	double aux = logr.front();
+	size_t pos_r=0;
+	while (aux < logr_actual && pos_r < logr.size()-1) {
+		pos_r++;
+		aux = logr[pos_r];
+	}
+	double m = (logv[pos_r]-logv[pos_r-1])/(logr[pos_r]-logr[pos_r-1]);
+	double logrv = m*(logr_actual-logr[pos_r-1])+logv[pos_r-1];
+	double vel = -exp(logrv);
+	double r_rg = r / gravRadius;
+	double result = (r_rg <= 30 ? vel / (0.93*exp(2.13/r_rg)) : vel);
+	return result;
+}
+
+// Interpolation functions for precomputed ADAF (from sol_spin file)
+// Note: precomp_r is in dimensionless units r/r_g where r_g = GM/c^2 = r_s/2
+
+// Returns mass density in g/cm^3
+double precompDensity(double r)
+{
+	if (!readPrecomputedADAF || precomp_r.empty()) return 0.0;
+	double r_dimless = r / gravRadius;  // Convert to r/r_g
+	
+	// Handle out of bounds
+	if (r_dimless >= precomp_r.front()) return precomp_density.front();  // Data is ordered from large to small r
+	if (r_dimless <= precomp_r.back()) return precomp_density.back();
+	
+	// Find interpolation position (data is in decreasing r order)
+	size_t pos_r = 0;
+	while (pos_r < precomp_r.size()-1 && precomp_r[pos_r] > r_dimless) {
+		pos_r++;
+	}
+	
+	// Linear interpolation in log-log space
+	double logr1 = log(precomp_r[pos_r-1]);
+	double logr2 = log(precomp_r[pos_r]);
+	double logd1 = log(precomp_density[pos_r-1]);
+	double logd2 = log(precomp_density[pos_r]);
+	double m = (logd2-logd1)/(logr2-logr1);
+	double logd = m*(log(r_dimless)-logr1)+logd1;
+	return exp(logd);
+}
+
+double precompRadialVel(double r)
+{
+	if (!readPrecomputedADAF || precomp_r.empty()) return 0.0;
+	double r_dimless = r / gravRadius;  // Convert to r/r_g
+	
+	// Handle out of bounds
+	if (r_dimless >= precomp_r.front()) return -precomp_v.front() * cLight;
+	if (r_dimless <= precomp_r.back()) return -precomp_v.back() * cLight;
+	
+	// Find interpolation position
+	size_t pos_r = 0;
+	while (pos_r < precomp_r.size()-1 && precomp_r[pos_r] > r_dimless) {
+		pos_r++;
+	}
+	
+	// Linear interpolation in log-log space
+	double logr1 = log(precomp_r[pos_r-1]);
+	double logr2 = log(precomp_r[pos_r]);
+	double logv1 = log(precomp_v[pos_r-1]);
+	double logv2 = log(precomp_v[pos_r]);
+	double m = (logv2-logv1)/(logr2-logr1);
+	double logv = m*(log(r_dimless)-logr1)+logv1;
+	return -exp(logv) * cLight;  // Negative because infall
+}
+
+double precompAzimuthalVel(double r)
+{
+	if (!readPrecomputedADAF || precomp_r.empty() || precomp_vphi.empty()) return 0.0;
+	double r_dimless = r / gravRadius;  // Convert to r/r_g
+
+	// Handle out of bounds
+	double phi_raw;
+	if (r_dimless >= precomp_r.front()) {
+		phi_raw = precomp_vphi.front();
+	} else if (r_dimless <= precomp_r.back()) {
+		phi_raw = precomp_vphi.back();
+	} else {
+		// Find interpolation position
+		size_t pos_r = 0;
+		while (pos_r < precomp_r.size()-1 && precomp_r[pos_r] > r_dimless) {
+			pos_r++;
+		}
+
+		// Linear interpolation in r (works with signed values and avoids log issues)
+		double r1 = precomp_r[pos_r-1];
+		double r2 = precomp_r[pos_r];
+		double phi1 = precomp_vphi[pos_r-1];
+		double phi2 = precomp_vphi[pos_r];
+		double m = (phi2-phi1)/(r2-r1);
+		phi_raw = m*(r_dimless-r1)+phi1;
+	}
+
+	// Input is v_phi/c.
+	return phi_raw * cLight;
+}
+
+double precompMagField(double r)
+{
+	if (!readPrecomputedADAF || precomp_r.empty()) return 0.0;
+	double r_dimless = r / gravRadius;  // Convert to r/r_g
+	
+	// Handle out of bounds
+	if (r_dimless >= precomp_r.front()) return precomp_B.front();
+	if (r_dimless <= precomp_r.back()) return precomp_B.back();
+	
+	// Find interpolation position
+	size_t pos_r = 0;
+	while (pos_r < precomp_r.size()-1 && precomp_r[pos_r] > r_dimless) {
+		pos_r++;
+	}
+	
+	// Linear interpolation in log-log space
+	double logr1 = log(precomp_r[pos_r-1]);
+	double logr2 = log(precomp_r[pos_r]);
+	double logB1 = log(precomp_B[pos_r-1]);
+	double logB2 = log(precomp_B[pos_r]);
+	double m = (logB2-logB1)/(logr2-logr1);
+	double logB = m*(log(r_dimless)-logr1)+logB1;
+	return exp(logB);
+}
+
+double precompHR(double r)
+{
+	if (!readPrecomputedADAF || precomp_r.empty()) return 0.0;
+	double r_dimless = r / gravRadius;  // Convert to r/r_g
+	
+	// Handle out of bounds
+	if (r_dimless >= precomp_r.front()) return precomp_HR.front();
+	if (r_dimless <= precomp_r.back()) return precomp_HR.back();
+	
+	// Find interpolation position
+	size_t pos_r = 0;
+	while (pos_r < precomp_r.size()-1 && precomp_r[pos_r] > r_dimless) {
+		pos_r++;
+	}
+	
+	// Linear interpolation
+	double r1 = precomp_r[pos_r-1];
+	double r2 = precomp_r[pos_r];
+	double HR1 = precomp_HR[pos_r-1];
+	double HR2 = precomp_HR[pos_r];
+	double m = (HR2-HR1)/(r2-r1);
+	return m*(r_dimless-r1)+HR1;
+}
+
+double precompTemp(double r)
+{
+	if (!readPrecomputedADAF || precomp_r.empty()) return 0.0;
+	double r_dimless = r / gravRadius;  // Convert to r/r_g
+	
+	// Handle out of bounds
+	if (r_dimless >= precomp_r.front()) return precomp_Temp.front();
+	if (r_dimless <= precomp_r.back()) return precomp_Temp.back();
+	
+	// Find interpolation position
+	size_t pos_r = 0;
+	while (pos_r < precomp_r.size()-1 && precomp_r[pos_r] > r_dimless) {
+		pos_r++;
+	}
+	
+	// Linear interpolation in log-log space
+	double logr1 = log(precomp_r[pos_r-1]);
+	double logr2 = log(precomp_r[pos_r]);
+	double logT1 = log(precomp_Temp[pos_r-1]);
+	double logT2 = log(precomp_Temp[pos_r]);
+	double m = (logT2-logT1)/(logr2-logr1);
+	double logT = m*(log(r_dimless)-logr1)+logT1;
+	return exp(logT);
+}
+
+double precompBeta(double r)
+{
+	if (!readPrecomputedADAF || precomp_r.empty()) return 1.0;
+	double r_dimless = r / gravRadius;  // Convert to r/r_g
+	
+	// Handle out of bounds
+	if (r_dimless >= precomp_r.front()) return precomp_beta.front();
+	if (r_dimless <= precomp_r.back()) return precomp_beta.back();
+	
+	// Find interpolation position
+	size_t pos_r = 0;
+	while (pos_r < precomp_r.size()-1 && precomp_r[pos_r] > r_dimless) {
+		pos_r++;
+	}
+	
+	// Linear interpolation
+	double r1 = precomp_r[pos_r-1];
+	double r2 = precomp_r[pos_r];
+	double b1 = precomp_beta[pos_r-1];
+	double b2 = precomp_beta[pos_r];
+	double m = (b2-b1)/(r2-r1);
+	return m*(r_dimless-r1)+b1;
+}
+
+double accretionTime(double r)
+{
+	return integSimpsonLog(exp(logr.front()),r/schwRadius,[&](double rr)
+			{
+				rr *= schwRadius;
+				double vr = -radialVel(rr);
+				return rr/vr;
+			},30);
+}
+
+double accretionTimer1r2(double rIni, double rEnd)
+{
+	return (rIni > rEnd) ? integSimpsonLog(rIni,rEnd,[&](double rr)
+			{
+				rr *= schwRadius;
+				double vr = -radialVel(rr);
+				return rr/vr;
+			},50) : 1e100;
+}
+
+// Returns magFieldPar = 1/(1+beta) from precomputed beta
+double precompMagFieldPar(double r)
+{
+	if (!readPrecomputedADAF || precomp_r.empty()) return magFieldPar;
+	double beta = precompBeta(r);
+	return 1.0 / (1.0 + beta);
+}
+
+// Compute radial Lorentz factor: gamma_r = 1/sqrt(1 - v_r^2/c^2)
+double radialLorentzFactor(double r)
+{
+	double vr = radialVel(r) / cLight;  // radial velocity in units of c
+	if (std::abs(vr) >= 1.0) vr = -0.99;  // Safety check
+	double gamma_r = 1.0 / sqrt(1.0 - vr*vr);
+	return gamma_r;
+}
+
+// Compute square root of Kerr metric determinant: sqrt(Delta)
+// where Delta = r^2 - 2r + a^2 (with r and a in geometric units, r_g = 1)
+double metricDeterminantSqrt(double r)
+{
+	double a = blackHoleSpin;
+	double r_geom = r / gravRadius;  // Convert r to geometric units (r/r_g)
+	double a_geom = a;  // a is already dimensionless
+	
+	double r2 = r_geom * r_geom;
+	double a2 = a_geom * a_geom;
+	double Delta = r2 - 2.0*r_geom + a2;
+	
+	if (Delta <= 0.0) return 1.0;  // Inside or at horizon
+	
+	return sqrt(Delta);
+}
+
+// Compute accretion rate from precomputed quantities: Mdot = 4*pi*r*H*rho*|v|*gamma_r*sqrt(Delta)
+double precompAccRate(double r)
+{
+	if (!readPrecomputedADAF || precomp_r.empty()) return 0.0;
+	double rho = precompDensity(r);              // g/cm^3
+	double v = std::abs(precompRadialVel(r)) * cLight;  // cm/s (precompRadialVel returns v/c)
+	double HR = precompHR(r);
+	double H = r * HR;                            // cm
+	
+	// Include relativistic corrections
+	double gamma_r = radialLorentzFactor(r);     // radial Lorentz factor
+	double sqrt_Delta = metricDeterminantSqrt(r);  // square root of metric determinant
+	
+	return 4.0 * pi * r * H * rho * v * gamma_r * sqrt_Delta;  // g/s
+}
+
+double keplAngVel(double r)
+{
+	return (r > schwRadius) ? sqrt(gravitationalConstant*blackHoleMass/r) / (r-schwRadius) :
+				sqrt(gravitationalConstant*blackHoleMass/schwRadius) / 0.1*schwRadius;
+}
+
+double sqrdSoundVel(double r)
+{
+	// Use local magFieldPar from precomputed beta if available
+	double localMagFieldPar = (readPrecomputedADAF && !precomp_r.empty()) ? 
+	                          precompMagFieldPar(r) : magFieldPar;
+	return boltzmann / (localMagFieldPar*atomicMassUnit) * ( ionTemp(r) / iMeanMolecularWeight 
+							+ electronTemp(r) / eMeanMolecularWeight );
+}
+
+double height_fun(double r)
+{
+	// Use precomputed H/R if available
+	if (readPrecomputedADAF && !precomp_r.empty()) {
+		return r * precompHR(r);
+	}
+	
+	if (height_method == 1)
+		return sqrt(sqrdSoundVel(r))/keplAngVel(r);
+	else
+		return r*costhetaH(r);
+}
+
+double volume(double r)
+{
+	double rB2 = r*sqrt(paso_r);
+	double rB1 = rB2/paso_r;
+	if (height_method == 1)
+		return 2.0*height_fun(r)*pi*(rB2*rB2-rB1*rB1)*sqrt(pi)/2.0;
+	else
+		return (4.0/3.0)*pi*costhetaH(r)*(rB2*rB2*rB2-rB1*rB1*rB1);
+}
+
+double angularVel(double r)
+{
+	return alpha*sqrdSoundVel(r)/(-radialVel(r)*r) + (j*schwRadius*cLight)/(r*r);
+}
+
+double costhetaH(double r)
+{
+	double cs = sqrt(sqrdSoundVel(r));
+	double omR = angularVel(r)*r;
+	double result = sqrt(pi/2.0) * cs/omR * erf(omR / (sqrt(2.0)*cs));
+	return result;
+}
+
+double fAcc(double r)
+{
+	double rOut = exp(logr.back())*schwRadius;
+	return (r < rTr) ? 0.0 :
+			(r > rOut ? 1.0 :
+			(1.0-pow(rTr/r,powerIndex)) / (1.0-pow(rTr/rOut,powerIndex)) );
+}
+
+double gAccAux(double r)
+{
+	double rOutADAF = exp(logr.back())*schwRadius;
+	double result = ( (-( pow(r,powerIndex+s) - pow(rOutADAF,powerIndex+s) ) )*pow(rTr,powerIndex)*s -
+            pow(rOutADAF,s) * pow(r*rOutADAF,powerIndex) * ( pow(rTr/r,powerIndex) -
+            pow(r/rOutADAF,s) * pow(rTr/rOutADAF,powerIndex) )*(powerIndex+s) ) /
+			( pow(rOutADAF,s) * pow(r*rOutADAF,powerIndex) ) /
+			( ( -1.0 + pow(rTr/rOutADAF,powerIndex) ) * (powerIndex+s) );
+
+		
+	return result;
+
+}
+
+double gAcc(double r)
+{
+	double rOut = exp(logr.back())*schwRadius;
+	return (r < rTr ? gAccAux(rTr)*pow(r/rTr,s) : (r > rOut ? 0.0 : gAccAux(r)));
+}
+
+double accRateADAF(double r)
+{
+	// Use precomputed accretion rate when available
+	if (readPrecomputedADAF && !precomp_r.empty()) {
+		return precompAccRate(r);
+	}
+	
+	double coronaFraction = GlobalConfig.get<double>("accRateCorona");
+	double rOut = exp(logr.back())*schwRadius;
+	double result = accRateOut * (r < rOut ? pow(r/rOut,s) : 0.0);
+	int processesFlags[numProcesses];
+	readThermalProcesses(processesFlags);
+	
+	if (processesFlags[3]) {
+		result = accRateOut * gAcc(r) * coronaFraction;
+		if (rTr < 5*schwRadius)
+			result = accRateOut * coronaFraction * pow(r/rOut,s);
+	}
+	
+	// Include relativistic corrections
+	double gamma_r = radialLorentzFactor(r);     // radial Lorentz factor
+	double sqrt_Delta = metricDeterminantSqrt(r);  // square root of metric determinant
+	result *= gamma_r * sqrt_Delta;
+	
+	return result;
+}
+
+double massDensityADAF(double r)
+{
+	// Use precomputed mass density if available (already in g/cm^3)
+	if (readPrecomputedADAF && !precomp_r.empty()) {
+		return precompDensity(r);
+	}
+	
+	double result = 0.0;
+	if (height_method == 0)
+		result = accRateADAF(r) / (4.0*pi*r*height_fun(r)*(-radialVel(r)));
+	else 
+		result = accRateADAF(r) / (4.0*pi*r*height_fun(r)*(-radialVel(r)));
+	double result_out = accRateADAF(exp(logr.back())*schwRadius/1.1) / 
+			(4.0*pi*r*height_fun(r)*(-radialVel(exp(logr.back())*schwRadius/1.1)));
+	return (result > 0.0 && r < exp(logr.back())*schwRadius) ? result : result_out;
+}
+
+double magneticField(double r)
+{
+	// Use precomputed magnetic field if available
+	if (readPrecomputedADAF && !precomp_r.empty()) {
+		return precompMagField(r);
+	}
+	
+	double rad = r;
+	if (r > exp(logr.back())*schwRadius) rad = exp(logr.back())*schwRadius/1.01;
+	if (r < exp(logr.front())*schwRadius) rad = exp(logr.front())*schwRadius*1.01;
+	return sqrt(8.0*pi*(1.0-magFieldPar)*massDensityADAF(rad)*sqrdSoundVel(rad));
+}
+
+double accRateColdDisk(double r)
+{
+	double result = accRateOut * fAcc(r);
+	return result;
+}
+
+double auxCD(double r)
+{
+	double lj1 = r / sqrt(paso_r);
+	double lj2 = r * sqrt(paso_r);
+	return 3.0*gravitationalConstant*blackHoleMass*accRateColdDisk(r)/2.0 *
+			(1.0/lj1 * (1.0-2.0/3.0*sqrt(rTr/lj1))-1.0/lj2*(1.0-2.0/3.0*sqrt(rTr/lj2)));
+}
+
+double electronDensity(double r)
+{
+	double rIn, rOut;
+	if (readPrecomputedADAF && !precomp_r.empty()) {
+		// Enforce rIn >= horizonRadius for physical validity
+		double precomp_rIn = precomp_r.back() * gravRadius;
+		rIn = std::max(precomp_rIn, horizonRadius);
+		rOut = precomp_r.front() * gravRadius;  // outer boundary in cm
+	} else {
+		rIn = schwRadius;
+		rOut = exp(logr.back())*schwRadius;
+	}
+	return (r >= rIn && r <= rOut) ? massDensityADAF(r)/(atomicMassUnit*eMeanMolecularWeight) : 0.0;
+}
+
+double electronDensityTheta(double r, double theta)
+{
+	double thetaMinLocal;
+	double rOut;
+	if (readPrecomputedADAF && !precomp_r.empty()) {
+		rOut = precomp_r.front() * gravRadius;
+	} else {
+		rOut = exp(logr.back())*schwRadius;
+	}
+	if (r <= rOut) {
+		if (height_method == 0) {
+			thetaMinLocal = acos(height_fun(r)/r);
+			return (theta > thetaMinLocal && theta < pi-thetaMinLocal) ?
+											electronDensity(r) : 0.0;
+		} else {
+			double z = r*cos(theta);
+			double rho = r*sin(theta);
+			double h = height_fun(rho);
+			return electronDensity(rho)*exp(-z*z/(2.0*h*h));
+		}
+	} else
+		return 0.0;
+}
+
+double ionDensity(double r)
+{
+	return massDensityADAF(r)/(atomicMassUnit*iMeanMolecularWeight);
+}
+
+double qie(double r, double Ti, double Te)
+{
+	double theta_e = boltzmann*Te / electronRestEnergy;
+	double theta_i = boltzmann*Ti / (protonMass*cLight2);
+	double lnLambda = 20.0;
+	double diftemps = boltzmann*(Ti-Te);
+	double aux = 1.5*electronMass/protonMass * electronDensity(r) * ionDensity(r) *
+					thomson * cLight * lnLambda * diftemps;
+	double aux2 = (sqrt(2.0/pi)+sqrt(theta_e+theta_i))/pow(theta_e+theta_i,1.5);
+	return aux*aux2;
+}
+
+double qie_beta(double r, double Ti, double Te)
+{
+	double lnLambda = 20.0;
+	double theta_e = boltzmann*Te / electronRestEnergy;
+	double theta_i = boltzmann*Ti/(protonMass*cLight2);
+	double xe = 1.0/theta_e;
+	double xi = 1.0/theta_i;
+	double xei = xe+xi;
+
+	double k2i = gsl_sf_bessel_Kn(2,xi);
+	double k2e = gsl_sf_bessel_Kn(2,xe);
+	double k1ei = gsl_sf_bessel_K1(xei);
+	double k0ei = gsl_sf_bessel_K0(xei);
+
+	double sumtheta = theta_i + theta_e;
+	double aux1 = 1.875*thomson*(electronMass/protonMass)*cLight * lnLambda * 
+			electronDensity(r)*ionDensity(r) * boltzmann*(Ti-Te);
+	double aux2 = (2.0*sumtheta*sumtheta+1.0)/sumtheta;
+	
+	return (xei > 300.0 ? (xi > 150.0 ? (xe > 150.0 ? aux1*sqrt(2.0*xei/(pi*xe*xi))*
+				(aux2+2.0) : aux1*sqrt(xi/xei)*(aux2+2.0)*exp(-xe)/k2e) : 
+				aux1*sqrt(xe/xei)*(aux2+2.0)*exp(-xi)/k2i) : 
+				aux1*(aux2 * k1ei/k2i + 2.0*k0ei/k2i)/k2e);
+
+}
+
+double dlogrho_dlogr(double r)
+{
+	double logr = log(r);
+	double dlogr = log(paso_r);
+	double logr2 = logr + 0.5*dlogr;
+	double logr1 = logr - 0.5*dlogr;
+	double r2 = exp(logr2);
+	double r1 = exp(logr1);
+	double logrho2 = log(massDensityADAF(r2));
+	double logrho1 = log(massDensityADAF(r1));
+	return (logrho2 - logrho1) / dlogr;
+}
+
+double dlogom_dlogr(double r)
+{
+	double logr = log(r);
+	double dlogr = log(paso_r);
+	double logr2 = logr + dlogr;
+	double logr1 = logr - dlogr;
+	double r2 = exp(logr2);
+	double r1 = exp(logr1);
+	double logOm2 = log(angularVel(r2));
+	double logOm1 = log(angularVel(r1));
+	return 0.5 * (logOm2 - logOm1) / dlogr;
+}
+
+double Qplus(double r, double Ti, double Te)
+{
+	double pressure = massDensityADAF(r) * (boltzmann/atomicMassUnit/magFieldPar) *
+						(Ti/iMeanMolecularWeight + Te/eMeanMolecularWeight);
+	return -alpha*pressure*angularVel(r)*dlogom_dlogr(r);
+}
+
+double Qmin_func(double r, Matrix lumOut, Matrix lumInICm, Vector energies, State& st)
+{
+	double logr_actual = log10(r);
+	double aux = log10(st.denf_e.ps[DIM_R][0]);
+	size_t pos_r = 0;
+	while (aux < logr_actual) {
+		pos_r++;
+		aux = log10(st.denf_e.ps[DIM_R][pos_r]);
+	}
+	
+	double r1 = st.denf_e.ps[DIM_R][pos_r-1];
+	double vol1 = volume(r1);
+	
+	double r2 = st.denf_e.ps[DIM_R][pos_r];
+	double vol2 = volume(r2);
+	
+	double eVar = pow(energies[nE-1]/energies[0],1.0/(nE-1));
+	double Qmin = 0.0;
+	for (size_t jE=0;jE<nE;jE++)  {
+		double frequency = energies[jE]/planck;
+		double dfrequency = frequency * (sqrt(eVar)-1.0/sqrt(eVar));
+		double qO2 = lumOut[jE][pos_r]/vol2;
+		double qO1 = lumOut[jE][pos_r-1]/vol1;
+		double qI2 = lumInICm[jE][pos_r]/vol2;
+		double qI1 = lumInICm[jE][pos_r-1]/vol1;
+		double mO = (qO1 > 0.0 && qO2 > 0.0) ? safeLog10(qO2/qO1) / safeLog10(r2/r1) : 0.0;
+		double mI = (qI1 > 0.0 && qI2 > 0.0) ? safeLog10(qI2/qI1) / safeLog10(r2/r1) : 0.0;
+		double logqO = (qO1 > 0.0) ? mO*(logr_actual-log10(r1))+safeLog10(qO1) : -100;
+		double logqI = (qI1 > 0.0) ? mI*(logr_actual-log10(r1))+safeLog10(qI1) : -100;;
+		Qmin += (pow(10.0,logqO)-pow(10.0,logqI))*dfrequency;
+	}
+	return Qmin;
+}

@@ -1,0 +1,32 @@
+[run]
+output_dir = "runs/thermal-riaf"
+
+[profile]
+# Use "hydro" for the bundled 1-D solver. Use "external" to read a radial
+# profile produced by another code; see docs/external-profiles.md.
+source = "hydro"
+
+[hydro]
+blackHoleMass = 6.5e9
+accRateNorm = 0.00042
+rOut = 1.0e4
+innerRadiusSSD = 9.0e3
+beta = 0.9
+alpha = 0.1
+delta = 0.3
+s = 0.35
+pIndex = 0.1
+log10j0 = 0.084397553
+log10j1 = 0.322219295
+
+[radiation]
+synchrotron = true
+bremsstrahlung = true
+comptonization = true
+calculate_scattering_matrix = true
+
+[grid]
+radius_samples = 50
+energy_samples = 100
+log10_energy_ev_min = -6.0
+log10_energy_ev_max = 8.0
