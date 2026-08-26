@@ -135,7 +135,11 @@ def main():
     runtime_env = os.environ.copy()
     runtime_env["OMP_NUM_THREADS"] = str(cfg.get("run", {}).get("omp_threads", 1))
     run([executable], cwd=run_dir, env=runtime_env)
+    plot_path = run_dir / "thermal-diagnostics.png"
+    run([sys.executable, ROOT / "plot_diagnostics.py", args.config.resolve(),
+         "--spectrum-dir", run_dir, "--output", plot_path])
     print(f"thermal spectrum: {run_dir / 'lumThermal.dat'}")
+    print(f"diagnostic plot: {plot_path}")
 
 
 if __name__ == "__main__":

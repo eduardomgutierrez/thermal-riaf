@@ -33,7 +33,10 @@ python riaf_pipeline.py examples/thermal-riaf.toml
 
 The example writes hydrodynamic files under `runs/thermal-riaf/hydro/` and the
 radiative results under `runs/thermal-riaf/spectrum/`. The final spectrum is
-`lumThermal.dat`. The pipeline uses a separate `radproc/build/` directory and
+`lumThermal.dat`. It also creates `thermal-diagnostics.png`, containing the
+separate emission components, radial luminosity, cumulative emission, and an
+accretion-power sanity check. Machine-readable values are saved in
+`diagnostics.json`. The pipeline uses a separate `radproc/build/` directory and
 reuses it on later runs. Required Compton probability tables are copied into
 each run automatically.
 
@@ -76,3 +79,9 @@ consistently, and keeps generated files out of the source directories.
 - `--no-build` runs an already compiled executable without invoking Meson.
 
 Run the lightweight interface tests with `python -m unittest discover -s tests`.
+
+To recreate a plot without rerunning either physical code:
+
+```bash
+python plot_diagnostics.py examples/thermal-riaf.toml
+```
