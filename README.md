@@ -37,6 +37,10 @@ radiative results under `runs/thermal-riaf/spectrum/`. The final spectrum is
 reuses it on later runs. Required Compton probability tables are copied into
 each run automatically.
 
+The example defaults to one OpenMP thread. The legacy scattering-matrix routine
+has shared mutable state and can fail nondeterministically with multiple threads;
+do not increase `run.omp_threads` until that routine has been made thread-safe.
+
 To test only the Python solution and parameter handoff:
 
 ```bash

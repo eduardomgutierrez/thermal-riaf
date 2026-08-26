@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -12,9 +13,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 
-def run(command, *, cwd=None):
+def run(command, *, cwd=None, env=None):
     print("+", " ".join(map(str, command)))
-    subprocess.run(command, cwd=cwd, check=True)
+    subprocess.run(command, cwd=cwd, check=True, env=env)
 
 
 def nested_set(data, dotted_key, value):
@@ -131,7 +132,9 @@ def main():
         run(["meson", "compile", "-C", build_dir])
     if not executable.is_file():
         raise FileNotFoundError(f"radproc executable not found: {executable}")
-    run([executable], cwd=run_dir)
+    runtime_env = os.environ.copy()
+    runtime_env["OMP_NUM_THREADS"] = str(cfg.get("run", {}).get("omp_threads", 1))
+    run([executable], cwd=run_dir, env=runtime_env)
     print(f"thermal spectrum: {run_dir / 'lumThermal.dat'}")
 
 

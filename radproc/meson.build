@@ -7,11 +7,11 @@ project( 'adaf',
 gsl_dep = dependency('gsl')
 boost_dep = dependency('boost')
 omp_dep = dependency('openmp')
-hdf5_dep = dependency('hdf5')
-
-cxx = meson.get_compiler('cpp')
-hdf5_cpp_dep = cxx.find_library('hdf5_cpp')
-#hdf5_hl_cpp_dep = cxx.find_library('hdf5_hl_cpp')
+# Request the C++ interface through Meson's HDF5 resolver. On Debian/Ubuntu,
+# libhdf5_cpp lives in an HDF5-specific library directory and a bare
+# compiler.find_library('hdf5_cpp') cannot find it. This dependency also links
+# the underlying HDF5 C library.
+hdf5_cpp_dep = dependency('hdf5', language : 'cpp')
 
 subdir('src/lib/nrMath')
 subdir('src/lib/fmath')

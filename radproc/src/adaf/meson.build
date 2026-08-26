@@ -72,6 +72,5 @@ exe = executable( 'adaf',
                                    flosses_dep,
                                    fluminosities_dep,
                                    omp_dep,
-                                   hdf5_dep,
                                    hdf5_cpp_dep ],
                   include_directories : includes )
