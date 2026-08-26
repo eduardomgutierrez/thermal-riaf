@@ -512,6 +512,10 @@ void cNew(State& st, Vector& p, Vector redshift_to_inf)
 	size_t jR = 0;
 	st.photon.ps.iterate([&](const SpaceIterator& iR) {
 		double lognt = log10(boltzmann*st.tempElectrons.get(iR)/electronRestEnergy);
+		// Keep interpolation inside the tabulated temperature domain. The table
+		// endpoints are valid values, while pos_r-1 below requires pos_r >= 1.
+		lognt = std::max(static_cast<double>(ntVec[0]) + 1.0e-12,
+		                 std::min(lognt, static_cast<double>(ntVec[nTempCompton-1]) - 1.0e-12));
 		double aux = ntVec[0];
 		size_t pos_r = 0;
 		while (aux < lognt) {
@@ -535,7 +539,7 @@ void cNew(State& st, Vector& p, Vector redshift_to_inf)
 				size_t jjE = 0;
 				st.photon.ps.iterate([&](const SpaceIterator& iREE) {
 					double logomp = log10(iREE.val(DIM_E)/redshift_to_inf[jR]/electronRestEnergy);
-					if (logomp > ompVec[0] && logomp < ompVec[nNuCompton-1]) {
+					if (logomp > ompVec[0] && logomp < ompVec[nNuPrimCompton-1]) {
 						double aux = ompVec[0];
 						size_t pos_omp = 0;
 						while (aux < logomp) {
@@ -545,7 +549,7 @@ void cNew(State& st, Vector& p, Vector redshift_to_inf)
 						double logomp1 = ompVec[pos_omp-1];
 						double logomp2 = ompVec[pos_omp];
 						
-						if (pos_omp < nNuPrimCompton-1) {
+						if (pos_omp < nNuPrimCompton) {
 							double prob111 = probVec[((pos_r-1)*nNuPrimCompton+(pos_omp-1))*nNuCompton+(pos_om-1)];
 							double prob112 = probVec[((pos_r-1)*nNuPrimCompton+(pos_omp-1))*nNuCompton+pos_om];
 							double prob121 = probVec[((pos_r-1)*nNuPrimCompton+pos_omp)*nNuCompton+(pos_om-1)];

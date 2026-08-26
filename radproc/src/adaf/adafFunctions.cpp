@@ -466,11 +466,12 @@ double accRateADAF(double r)
 			result = accRateOut * coronaFraction * pow(r/rOut,s);
 	}
 	
-	// Include relativistic corrections
-	double gamma_r = radialLorentzFactor(r);     // radial Lorentz factor
-	double sqrt_Delta = metricDeterminantSqrt(r);  // square root of metric determinant
-	result *= gamma_r * sqrt_Delta;
-	
+	// `result` is the physical mass accretion rate supplied by the Python
+	// hydrodynamic solution. Do not multiply it by metric factors here: the
+	// continuity expression in massDensityADAF() already uses physical r, H and
+	// radial velocity. The former gamma_r*sqrt(Delta) factor grew approximately
+	// as r/r_g and inflated the outer density (and bremsstrahlung) by orders of
+	// magnitude.
 	return result;
 }
 
