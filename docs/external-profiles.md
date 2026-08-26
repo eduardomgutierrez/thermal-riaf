@@ -9,11 +9,19 @@ source = "external"
 file = "/path/to/profile.dat"
 black_hole_mass_msun = 10.0
 spin = 0.5
-ion_electron_temperature_ratio = 3.0
+r_high = 3.0
 ```
 
-The input must have one header line followed by whitespace-separated rows. The
-radius must decrease from the outer to the inner boundary. Columns are:
+The bundled, ready-to-run example is `examples/external-profile.toml`, using
+`examples/external-profile.dat` (copied unchanged from `sol_spin_p50.dat`). Run:
+
+```bash
+python riaf_pipeline.py examples/external-profile.toml
+```
+
+The input may contain blank lines and comment lines beginning with `#`; every
+data row must contain exactly 11 whitespace-separated values. Radius must be
+strictly decreasing from the outer to the inner boundary. Columns are:
 
 | Column | Quantity | Unit |
 |---:|---|---|
@@ -29,9 +37,25 @@ radius must decrease from the outer to the inner boundary. Columns are:
 | 10 | angular velocity | code input; currently not used |
 | 11 | azimuthal velocity | `c` |
 
-The present reader obtains the electron temperature from
-`T_e = T_i / ion_electron_temperature_ratio`. The pipeline copies the profile
-into the run directory, records all choices in `parameters.json`, and otherwise
-uses the same synchrotron, bremsstrahlung, and Compton calculation as the
-Python-hydrodynamics mode.
+The file temperature is interpreted as the ion temperature. Electron
+temperature uses the beta-dependent prescription
 
+`R(beta) = (1 + r_high beta^2) / (1 + beta^2)` and `T_e = T_i / R(beta)`.
+
+Thus `T_e = T_i` when `r_high = 1`; for larger values, magnetically dominated
+regions (`beta << 1`) remain near one temperature while gas-dominated regions
+(`beta >> 1`) approach `T_e = T_i/r_high`. The older key
+`ion_electron_temperature_ratio` remains accepted for compatibility, but
+`r_high` is the clearer name.
+
+`black_hole_mass_msun` must match the mass used to generate a dimensional
+density profile: physical radii and emitting volumes scale with it. The bundled
+`sol_spin_p50.dat` example was generated for `4.2e6` solar masses.
+
+Before launching C++, the pipeline checks the column count, finite values,
+positive density/temperature/scale height/beta, subluminal velocities,
+strict radial order, and that the inner point lies outside the Kerr horizon.
+It prints the accepted radial range and writes `profile-summary.json`, including
+boundary accretion rates and powers. The profile is then copied into the run
+directory and the same synchrotron, bremsstrahlung, and Compton calculation is
+used as in Python-hydrodynamics mode.

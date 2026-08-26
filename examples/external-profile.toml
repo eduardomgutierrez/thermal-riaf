@@ -1,0 +1,25 @@
+[run]
+output_dir = "runs/external-profile"
+omp_threads = 1
+
+[profile]
+source = "external"
+# Relative paths are resolved from this TOML file.
+file = "external-profile.dat"
+# This dimensional density profile was generated for this black-hole mass.
+black_hole_mass_msun = 4.2e6
+spin = 0.5
+# Electron heating prescription; see docs/external-profiles.md.
+r_high = 1.0
+
+[radiation]
+synchrotron = true
+bremsstrahlung = true
+comptonization = true
+calculate_scattering_matrix = true
+
+[grid]
+radius_samples = 50
+energy_samples = 100
+log10_energy_ev_min = -6.0
+log10_energy_ev_max = 8.0

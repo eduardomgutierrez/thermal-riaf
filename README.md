@@ -61,6 +61,12 @@ Set `profile.source = "external"` to bypass the Python hydrodynamics and feed a
 radial profile directly to `radproc`. The expected columns and units are in
 [docs/external-profiles.md](docs/external-profiles.md).
 
+The repository includes a complete external-profile example:
+
+```bash
+python riaf_pipeline.py examples/external-profile.toml
+```
+
 ## Existing low-level interfaces
 
 The historical scripts and full `radproc/src/adaf/parameters.json` interface

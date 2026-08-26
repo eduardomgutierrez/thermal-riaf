@@ -25,9 +25,14 @@ def positive(values, relative_floor=1.0e-12):
     return np.where(values > floor, values, np.nan)
 
 
-def energy_budget(cfg, spectrum):
+def energy_budget(cfg, spectrum, spectrum_dir=None):
     total = integrated_luminosity(spectrum[:, 0], spectrum[:, 8])
     if cfg.get("profile", {}).get("source", "hydro") != "hydro":
+        summary_path = spectrum_dir / "profile-summary.json" if spectrum_dir else None
+        if summary_path and summary_path.is_file():
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            return (total, summary["outer_accretion_power_erg_s"],
+                    summary["inner_accretion_power_erg_s"])
         return total, None, None
     hydro = cfg["hydro"]
     outer = (EDDINGTON_ACCRETION_RATE * hydro["blackHoleMass"]
@@ -48,7 +53,7 @@ def make_plot(config_path, spectrum_dir, output_path):
         raise ValueError("lumRadius.dat does not have the expected 7+ columns")
 
     frequency = spectrum[:, 0]
-    total_lum, outer_power, inner_power = energy_budget(cfg, spectrum)
+    total_lum, outer_power, inner_power = energy_budget(cfg, spectrum, spectrum_dir)
     seed_lum = integrated_luminosity(frequency, spectrum[:, 2] + spectrum[:, 3])
     compton_lum = integrated_luminosity(frequency, spectrum[:, 4])
 

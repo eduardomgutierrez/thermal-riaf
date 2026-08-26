@@ -357,7 +357,7 @@ double precompAccRate(double r)
 {
 	if (!readPrecomputedADAF || precomp_r.empty()) return 0.0;
 	double rho = precompDensity(r);              // g/cm^3
-	double v = std::abs(precompRadialVel(r)) * cLight;  // cm/s (precompRadialVel returns v/c)
+	double v = std::abs(precompRadialVel(r));           // cm/s
 	double HR = precompHR(r);
 	double H = r * HR;                            // cm
 	
