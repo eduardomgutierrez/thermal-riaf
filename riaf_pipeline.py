@@ -2,6 +2,7 @@
 """Run a thermal RIAF spectrum from one TOML configuration."""
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -15,6 +16,14 @@ ROOT = Path(__file__).resolve().parent
 C_LIGHT = 2.99792458e10
 GRAVITATIONAL_CONSTANT = 6.67430e-8
 SOLAR_MASS = 1.98847e33
+COMPTON_MATRIX_FILES = ("scattAA.dat", "scattDA.dat")
+COMPTON_CACHE_FILE = "compton-matrix-cache.json"
+HYDRO_OUTPUT_FILES = (
+    "adafFile.txt", "adafParameters.txt", "Temperatures.pdf", "MachNumber.pdf",
+    "SurfaceDens.pdf", "accRate.pdf", "HR.pdf", "angularMom.pdf", "eDens.pdf",
+    "magf.pdf",
+)
+HYDRO_CACHE_FILE = "hydro-cache.json"
 
 
 def run(command, *, cwd=None, env=None):
@@ -28,6 +37,116 @@ def nested_set(data, dotted_key, value):
     for part in parts[:-1]:
         node = node.setdefault(part, {})
     node[parts[-1]] = value
+
+
+def hydro_cache_signature(hydro_config_path):
+    """Hash the hydro parameters and solver sources that determine its output."""
+    digest = hashlib.sha256()
+    digest.update(hydro_config_path.read_bytes())
+    for path in sorted((ROOT / "RIAF").glob("*.py")):
+        digest.update(path.name.encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def matching_hydro_cache(hydro_dir, signature):
+    cache_path = hydro_dir / HYDRO_CACHE_FILE
+    if not cache_path.is_file():
+        return False
+    if not all((hydro_dir / name).is_file() and (hydro_dir / name).stat().st_size > 0
+               for name in HYDRO_OUTPUT_FILES):
+        return False
+    try:
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    return cache.get("signature") == signature
+
+
+def ask_to_reuse_hydro_cache(hydro_dir, signature, input_fn=input):
+    if not matching_hydro_cache(hydro_dir, signature):
+        return False
+    try:
+        answer = input_fn(
+            "A matching hydro solution already exists. "
+            "Reuse it without recomputing? [Y/n] "
+        ).strip().lower()
+    except EOFError:
+        print("no interactive response available; recomputing hydro solution")
+        return False
+    return answer in {"", "y", "yes"}
+
+
+def record_hydro_cache(hydro_dir, signature):
+    if not all((hydro_dir / name).is_file() and (hydro_dir / name).stat().st_size > 0
+               for name in HYDRO_OUTPUT_FILES):
+        raise FileNotFoundError("hydro solver did not produce all expected data and PDF files")
+    payload = {"signature": signature, "output_files": list(HYDRO_OUTPUT_FILES)}
+    (hydro_dir / HYDRO_CACHE_FILE).write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def compton_cache_signature(run_dir):
+    """Hash all inputs that determine the radial Compton scattering matrices."""
+    parameters_path = run_dir / "parameters.json"
+    parameters = json.loads(parameters_path.read_text(encoding="utf-8"))
+    # This switch controls whether the matrices are made or read; it does not
+    # affect their contents and therefore is not part of their identity.
+    parameters.pop("calculateComptonScatt", None)
+    digest = hashlib.sha256()
+    digest.update(json.dumps(parameters, sort_keys=True, separators=(",", ":")).encode())
+    profile_name = (parameters.get("solSpinFile") if parameters.get("readPrecomputedADAF") == "1"
+                    else None)
+    profile_files = [profile_name] if profile_name else ["adafFile.txt", "adafParameters.txt"]
+    for name in profile_files:
+        path = run_dir / name
+        digest.update(name.encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def matching_compton_cache(run_dir, signature):
+    cache_path = run_dir / COMPTON_CACHE_FILE
+    if not cache_path.is_file():
+        return False
+    if not all((run_dir / name).is_file() and (run_dir / name).stat().st_size > 0
+               for name in COMPTON_MATRIX_FILES):
+        return False
+    try:
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    return cache.get("signature") == signature
+
+
+def ask_to_reuse_compton_cache(run_dir, signature, input_fn=input):
+    if not matching_compton_cache(run_dir, signature):
+        return False
+    try:
+        answer = input_fn(
+            "Matching Compton scattering matrices already exist. "
+            "Reuse them without recalculating? [Y/n] "
+        ).strip().lower()
+    except EOFError:
+        print("no interactive response available; recalculating Compton matrices")
+        return False
+    return answer in {"", "y", "yes"}
+
+
+def set_compton_matrix_calculation(run_dir, calculate):
+    path = run_dir / "parameters.json"
+    parameters = json.loads(path.read_text(encoding="utf-8"))
+    parameters["calculateComptonScatt"] = str(int(calculate))
+    path.write_text(json.dumps(parameters, indent=2) + "\n", encoding="utf-8")
+
+
+def record_compton_cache(run_dir, signature):
+    if not all((run_dir / name).is_file() and (run_dir / name).stat().st_size > 0
+               for name in COMPTON_MATRIX_FILES):
+        raise FileNotFoundError("radproc did not produce both Compton scattering matrices")
+    payload = {"signature": signature, "matrix_files": list(COMPTON_MATRIX_FILES)}
+    (run_dir / COMPTON_CACHE_FILE).write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def validate(cfg):
@@ -216,12 +335,24 @@ def main():
     if cfg.get("profile", {}).get("source", "hydro") == "hydro":
         hydro_cfg = hydro_dir / "hydro-input.json"
         hydro_cfg.write_text(json.dumps(cfg.get("hydro", {}), indent=2) + "\n", encoding="utf-8")
-        run([sys.executable, ROOT / "RIAF/solve.py", "--config", hydro_cfg,
-             "--output-dir", hydro_dir])
+        hydro_signature = hydro_cache_signature(hydro_cfg)
+        if ask_to_reuse_hydro_cache(hydro_dir, hydro_signature):
+            print("reusing cached hydro solution")
+        else:
+            hydro_env = os.environ.copy()
+            hydro_env["MPLCONFIGDIR"] = str(hydro_dir / ".matplotlib")
+            run([sys.executable, ROOT / "RIAF/solve.py", "--config", hydro_cfg,
+                 "--output-dir", hydro_dir], env=hydro_env)
+            record_hydro_cache(hydro_dir, hydro_signature)
     prepare_radproc_config(cfg, run_dir, hydro_dir, args.config.resolve().parent)
     if args.hydro_only:
         print(f"prepared run in {output}")
         return
+    compton_signature = compton_cache_signature(run_dir)
+    reuse_compton_matrices = ask_to_reuse_compton_cache(run_dir, compton_signature)
+    if reuse_compton_matrices:
+        set_compton_matrix_calculation(run_dir, False)
+        print("reusing cached Compton scattering matrices")
     build_dir = ROOT / "radproc/build"
     executable = build_dir / "src/adaf/adaf"
     if args.build:
@@ -238,6 +369,7 @@ def main():
     runtime_env = os.environ.copy()
     runtime_env["OMP_NUM_THREADS"] = str(cfg.get("run", {}).get("omp_threads", 4))
     run([executable], cwd=run_dir, env=runtime_env)
+    record_compton_cache(run_dir, compton_signature)
     plot_path = run_dir / "thermal-diagnostics.png"
     plot_env = os.environ.copy()
     plot_env["MPLCONFIGDIR"] = str(run_dir / ".matplotlib")

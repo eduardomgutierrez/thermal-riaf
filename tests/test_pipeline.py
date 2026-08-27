@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 import riaf_pipeline as pipeline
@@ -27,6 +28,49 @@ class PipelineConfigurationTests(unittest.TestCase):
         value = {}
         pipeline.nested_set(value, "a.b.c", 4)
         self.assertEqual(value, {"a": {"b": {"c": 4}}})
+
+    def test_matching_compton_cache_prompts_for_reuse(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            (run_dir / "parameters.json").write_text(json.dumps({
+                "calculateComptonScatt": "1",
+                "readPrecomputedADAF": "0",
+                "model": {"radius_samples": 2},
+            }), encoding="utf-8")
+            (run_dir / "adafFile.txt").write_text("profile", encoding="utf-8")
+            (run_dir / "adafParameters.txt").write_text("parameters", encoding="utf-8")
+            signature = pipeline.compton_cache_signature(run_dir)
+            for name in pipeline.COMPTON_MATRIX_FILES:
+                (run_dir / name).write_text("matrix", encoding="utf-8")
+            pipeline.record_compton_cache(run_dir, signature)
+
+            self.assertTrue(pipeline.ask_to_reuse_compton_cache(
+                run_dir, signature, input_fn=lambda _prompt: "yes"))
+            self.assertFalse(pipeline.ask_to_reuse_compton_cache(
+                run_dir, signature, input_fn=lambda _prompt: "no"))
+
+            (run_dir / "adafFile.txt").write_text("changed", encoding="utf-8")
+            changed_signature = pipeline.compton_cache_signature(run_dir)
+            self.assertFalse(pipeline.matching_compton_cache(run_dir, changed_signature))
+
+    def test_matching_hydro_cache_prompts_for_reuse(self):
+        with tempfile.TemporaryDirectory() as directory:
+            hydro_dir = Path(directory)
+            config = hydro_dir / "hydro-input.json"
+            config.write_text('{"blackHoleMass": 10}', encoding="utf-8")
+            signature = pipeline.hydro_cache_signature(config)
+            for name in pipeline.HYDRO_OUTPUT_FILES:
+                (hydro_dir / name).write_text("output", encoding="utf-8")
+            pipeline.record_hydro_cache(hydro_dir, signature)
+
+            self.assertTrue(pipeline.ask_to_reuse_hydro_cache(
+                hydro_dir, signature, input_fn=lambda _prompt: ""))
+            self.assertFalse(pipeline.ask_to_reuse_hydro_cache(
+                hydro_dir, signature, input_fn=lambda _prompt: "n"))
+
+            config.write_text('{"blackHoleMass": 11}', encoding="utf-8")
+            changed_signature = pipeline.hydro_cache_signature(config)
+            self.assertFalse(pipeline.matching_hydro_cache(hydro_dir, changed_signature))
 
     def write_profile(self, directory, rows):
         path = Path(directory) / "profile.dat"

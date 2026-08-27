@@ -56,7 +56,7 @@ their defaults.
 | `synchrotron` | Include thermal synchrotron emission and self-absorption. | `true` |
 | `bremsstrahlung` | Include thermal electron–ion/electron–electron bremsstrahlung. | `true` |
 | `comptonization` | Include thermal Comptonization of the seed photons. | `true` |
-| `calculate_scattering_matrix` | Recompute the Monte Carlo radial scattering/escape matrices. If false, compatible matrix files must already exist in the spectrum run directory. | `true` |
+| `calculate_scattering_matrix` | Recompute the Monte Carlo radial scattering/escape matrices. On a rerun with matching parameters and profile data, the pipeline asks whether to reuse the existing matrices. If false, compatible matrix files must already exist in the spectrum run directory. | `true` |
 | `scattering_random_seed` | Non-negative master seed. Each radial cell derives an independent stream, making results reproducible across OpenMP thread counts. | `5489` |
 
 The top-level pipeline always disables nonthermal particles, jets, hadronic

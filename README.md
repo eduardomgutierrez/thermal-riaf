@@ -46,11 +46,26 @@ accretion-power sanity check. Machine-readable values are saved in
 Normal scientific runs do not invoke CMake. Required Compton probability tables
 are copied into each run automatically.
 
+Hydrodynamic-profile runs also reproduce the eight PDFs from the historical
+solver in `runs/thermal-riaf/hydro/`: `Temperatures.pdf`, `MachNumber.pdf`,
+`SurfaceDens.pdf`, `accRate.pdf`, `HR.pdf`, `angularMom.pdf`, `eDens.pdf`, and
+`magf.pdf`. Their horizontal coordinate is `log10(r/R_S)`; the model is a
+stationary radial solution rather than a time-dependent calculation.
+On later runs with identical hydro parameters and solver code, the pipeline
+asks whether to reuse the complete hydro solution and its plots. Declining the
+prompt, changing a hydro parameter, or changing the solver invalidates reuse.
+
 The examples use four OpenMP threads. The Monte Carlo scattering calculation
 uses an independent random-number generator for each radial source cell, seeded
 from `radiation.scattering_random_seed`. Consequently, its result is reproducible
 and independent of the OpenMP thread count. Set `run.omp_threads` to suit the
 machine available to you.
+
+After a successful spectrum run, the pipeline records a fingerprint of the
+generated radproc parameters and the hydro or external-profile data. When the
+same inputs are run again and both radial Compton scattering matrices are
+present, it asks whether to reuse them; answering yes skips their Monte Carlo
+recalculation. Changed parameters or profile contents invalidate the cache.
 
 To test only the Python solution and parameter handoff:
 
