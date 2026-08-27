@@ -10,20 +10,22 @@ C++ program, and calculates synchrotron, bremsstrahlung, and Compton emission.
 
 - Python 3.11 or newer
 - NumPy, SciPy, Astropy, and Matplotlib
-- A C++17 compiler, Meson, and Ninja
+- A C++17 compiler and CMake
 - Boost, GSL, and OpenMP development files
 
 On Ubuntu/Debian, install the native dependencies with:
 
 ```bash
-sudo apt install build-essential meson ninja-build libboost-all-dev libgsl-dev
+sudo apt install build-essential cmake libboost-dev libgsl-dev
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-If Meson is not installed by the operating system, it may instead be installed
-inside the active environment with `python -m pip install meson`.
+CMake replaces only the native C++ build system. It does not replace Python:
+the top-level pipeline is written in Python, and hydro-profile runs additionally
+use the Python RIAF solver. Unlike Meson, however, CMake is installed here as a
+native system package rather than through the Python environment.
 
 ## Quick start
 
@@ -36,8 +38,8 @@ radiative results under `runs/thermal-riaf/spectrum/`. The final spectrum is
 `lumThermal.dat`. It also creates `thermal-diagnostics.png`, containing the
 separate emission components, radial luminosity, cumulative emission, and an
 accretion-power sanity check. Machine-readable values are saved in
-`diagnostics.json`. The pipeline uses a separate `radproc/build/` directory and
-reuses it on later runs. Required Compton probability tables are copied into
+`diagnostics.json`. The pipeline uses a separate CMake `radproc/build/`
+directory and reuses it on later runs. Required Compton probability tables are copied into
 each run automatically.
 
 The examples use four OpenMP threads. The Monte Carlo scattering calculation
@@ -107,7 +109,7 @@ consistently, and keeps generated files out of the source directories.
   `hydro.log10j0` and `hydro.log10j1` in the TOML.
 - Delete `radproc/build/` after changing compilers or system dependencies, then
   rerun the command.
-- `--no-build` runs an already compiled executable without invoking Meson.
+- `--no-build` runs an already compiled executable without invoking CMake.
 
 Run the lightweight interface tests with `python -m unittest discover -s tests`.
 

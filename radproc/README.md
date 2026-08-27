@@ -15,8 +15,8 @@ working directory:
 For direct development builds:
 
 ```bash
-meson setup build
-meson compile -C build
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
 ```
 
 The executable is `build/src/adaf/adaf`. Run it from a prepared spectrum folder,

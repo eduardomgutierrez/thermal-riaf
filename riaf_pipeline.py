@@ -223,13 +223,12 @@ def main():
     build_dir = ROOT / "radproc/build"
     executable = build_dir / "src/adaf/adaf"
     if not args.no_build:
-        if not shutil.which("meson"):
-            raise RuntimeError("Meson is not installed; see README.md")
-        # A failed Meson setup can leave the directory behind without a valid
-        # build definition, so test Meson's core data rather than the directory.
-        if not (build_dir / "meson-private/coredata.dat").is_file():
-            run(["meson", "setup", build_dir, ROOT / "radproc"])
-        run(["meson", "compile", "-C", build_dir])
+        if not shutil.which("cmake"):
+            raise RuntimeError("CMake is not installed; see README.md")
+        if not (build_dir / "CMakeCache.txt").is_file():
+            run(["cmake", "-S", ROOT / "radproc", "-B", build_dir,
+                 "-DCMAKE_BUILD_TYPE=Release"])
+        run(["cmake", "--build", build_dir, "--parallel"])
     if not executable.is_file():
         raise FileNotFoundError(f"radproc executable not found: {executable}")
     runtime_env = os.environ.copy()
