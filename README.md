@@ -11,12 +11,12 @@ C++ program, and calculates synchrotron, bremsstrahlung, and Compton emission.
 - Python 3.11 or newer
 - NumPy, SciPy, Astropy, and Matplotlib
 - A C++17 compiler, Meson, and Ninja
-- Boost, GSL, HDF5 (including its C++ library), and OpenMP development files
+- Boost, GSL, and OpenMP development files
 
 On Ubuntu/Debian, install the native dependencies with:
 
 ```bash
-sudo apt install build-essential meson ninja-build libboost-all-dev libgsl-dev libhdf5-dev
+sudo apt install build-essential meson ninja-build libboost-all-dev libgsl-dev
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r requirements.txt
@@ -70,6 +70,26 @@ The repository includes a complete external-profile example:
 
 ```bash
 python riaf_pipeline.py examples/external-profile.toml
+```
+
+This command validates the 2,553-point bundled profile, builds radproc, computes
+synchrotron, bremsstrahlung, and thermal Comptonization, and writes its products
+to `runs/external-profile/spectrum/`. A successful reference run gives a total
+thermal luminosity of approximately `3.3e35 erg s^-1` and an outer radiative
+efficiency of approximately `5.7e-4`. Small numerical differences can arise
+after changing the physical or grid parameters.
+
+The automatically generated diagnostic below shows the individual spectral
+components, emission as a function of radius, cumulative radial luminosity, and
+the accretion-energy check:
+
+![External-profile thermal spectrum and diagnostics](docs/images/external-profile-diagnostics.png)
+
+To regenerate only this figure from existing output:
+
+```bash
+python plot_diagnostics.py examples/external-profile.toml \
+  --spectrum-dir runs/external-profile/spectrum
 ```
 
 ## Existing low-level interfaces
