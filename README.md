@@ -19,7 +19,7 @@ On Ubuntu/Debian, install the native dependencies with:
 ```bash
 sudo apt install build-essential cmake libboost-dev libgsl-dev
 python3 -m venv .venv
-. .venv/bin/activate
+source .venv/bin/activate
 python -m pip install -r requirements.txt
 ./build.sh
 ```
