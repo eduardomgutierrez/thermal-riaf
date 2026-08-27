@@ -20,6 +20,7 @@ calculate_scattering_matrix = true
 scattering_random_seed = 5489
 
 [grid]
+# Photon energy limits are log10(E/eV).
 radius_samples = 50
 energy_samples = 100
 log10_energy_ev_min = -6.0

@@ -57,6 +57,9 @@ change the physical parameters, and keep `profile.source = "hydro"`. Thermal
 processes have explicit Boolean names; nonthermal calculations are always
 disabled by this interface.
 
+For definitions, units, defaults, and the contents of every generated parameter
+file, see the [configuration reference](docs/configuration.md).
+
 ## Radial profiles from another code
 
 Set `profile.source = "external"` to bypass the Python hydrodynamics and feed a

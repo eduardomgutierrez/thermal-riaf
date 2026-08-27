@@ -8,15 +8,20 @@ omp_threads = 4
 source = "hydro"
 
 [hydro]
+# Mass in solar masses and outer accretion rate in Eddington units.
 blackHoleMass = 6.5e9
 accRateNorm = 0.00042
+# Radii use Schwarzschild units R_S = 2GM/c^2.
 rOut = 1.0e4
 innerRadiusSSD = 9.0e3
+# Gas/total pressure, viscosity, direct electron heating, and wind indices.
 beta = 0.9
 alpha = 0.1
 delta = 0.3
 s = 0.35
 pIndex = 0.1
+# Bracket in log10 of the dimensionless inner angular momentum. The solver
+# finds the value inside this interval that crosses the sonic point smoothly.
 log10j0 = 0.084397553
 log10j1 = 0.322219295
 
@@ -30,6 +35,7 @@ calculate_scattering_matrix = true
 scattering_random_seed = 5489
 
 [grid]
+# Photon energy limits are log10(E/eV).
 radius_samples = 50
 energy_samples = 100
 log10_energy_ev_min = -6.0
