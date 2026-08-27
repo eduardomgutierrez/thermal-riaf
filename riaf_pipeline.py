@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and run a thermal RIAF spectrum from one TOML configuration."""
+"""Run a thermal RIAF spectrum from one TOML configuration."""
 
 import argparse
 import json
@@ -201,7 +201,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", type=Path)
     parser.add_argument("--hydro-only", action="store_true")
-    parser.add_argument("--no-build", action="store_true")
+    parser.add_argument("--build", action="store_true",
+                        help="configure and compile radproc before running")
+    parser.add_argument("--no-build", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     with args.config.open("rb") as stream:
         cfg = tomllib.load(stream)
@@ -222,7 +224,7 @@ def main():
         return
     build_dir = ROOT / "radproc/build"
     executable = build_dir / "src/adaf/adaf"
-    if not args.no_build:
+    if args.build:
         if not shutil.which("cmake"):
             raise RuntimeError("CMake is not installed; see README.md")
         if not (build_dir / "CMakeCache.txt").is_file():
@@ -230,7 +232,9 @@ def main():
                  "-DCMAKE_BUILD_TYPE=Release"])
         run(["cmake", "--build", build_dir, "--parallel"])
     if not executable.is_file():
-        raise FileNotFoundError(f"radproc executable not found: {executable}")
+        raise FileNotFoundError(
+            f"radproc executable not found: {executable}; run ./build.sh first "
+            "or rerun with --build")
     runtime_env = os.environ.copy()
     runtime_env["OMP_NUM_THREADS"] = str(cfg.get("run", {}).get("omp_threads", 4))
     run([executable], cwd=run_dir, env=runtime_env)

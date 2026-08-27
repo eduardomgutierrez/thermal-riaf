@@ -19,6 +19,11 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
+From the repository root, `./build.sh` performs these commands. Compilation is
+a setup step; ordinary calls to `riaf_pipeline.py` only execute the existing
+binary. Pass `--build` to the pipeline only when a rebuild is intentionally
+required.
+
 The executable is `build/src/adaf/adaf`. Run it from a prepared spectrum folder,
 not from the source directory. Named keys under `thermal.processes` are preferred;
 the older `thermal.processNumber` keys remain supported for compatibility.

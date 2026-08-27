@@ -3,8 +3,9 @@
 This repository joins the one-dimensional transonic RIAF solver in `RIAF/`
 to the thermal radiation code in `radproc/`. A collaborator edits one TOML
 file and runs one command; the pipeline finds the angular-momentum eigenvalue,
-integrates through the sonic point, transfers the radial solution, builds the
-C++ program, and calculates synchrotron, bremsstrahlung, and Compton emission.
+integrates through the sonic point, transfers the radial solution to the
+previously compiled C++ program, and calculates synchrotron, bremsstrahlung,
+and Compton emission.
 
 ## Requirements
 
@@ -20,12 +21,15 @@ sudo apt install build-essential cmake libboost-dev libgsl-dev
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r requirements.txt
+./build.sh
 ```
 
 CMake replaces only the native C++ build system. It does not replace Python:
 the top-level pipeline is written in Python, and hydro-profile runs additionally
 use the Python RIAF solver. Unlike Meson, however, CMake is installed here as a
-native system package rather than through the Python environment.
+native system package rather than through the Python environment. `build.sh`
+is the one-time compilation step; rerun it only after changing C++ source code,
+the compiler, or native libraries.
 
 ## Quick start
 
@@ -38,9 +42,9 @@ radiative results under `runs/thermal-riaf/spectrum/`. The final spectrum is
 `lumThermal.dat`. It also creates `thermal-diagnostics.png`, containing the
 separate emission components, radial luminosity, cumulative emission, and an
 accretion-power sanity check. Machine-readable values are saved in
-`diagnostics.json`. The pipeline uses a separate CMake `radproc/build/`
-directory and reuses it on later runs. Required Compton probability tables are copied into
-each run automatically.
+`diagnostics.json`. The compiled executable remains under `radproc/build/`.
+Normal scientific runs do not invoke CMake. Required Compton probability tables
+are copied into each run automatically.
 
 The examples use four OpenMP threads. The Monte Carlo scattering calculation
 uses an independent random-number generator for each radial source cell, seeded
@@ -68,13 +72,14 @@ Set `profile.source = "external"` to bypass the Python hydrodynamics and feed a
 radial profile directly to `radproc`. The expected columns and units are in
 [docs/external-profiles.md](docs/external-profiles.md).
 
-The repository includes a complete external-profile example:
+The repository includes a complete external-profile example. After the one-time
+`./build.sh` step, run:
 
 ```bash
 python riaf_pipeline.py examples/external-profile.toml
 ```
 
-This command validates the 2,553-point bundled profile, builds radproc, computes
+This command validates the 2,553-point bundled profile and computes
 synchrotron, bremsstrahlung, and thermal Comptonization, and writes its products
 to `runs/external-profile/spectrum/`. A successful reference run gives a total
 thermal luminosity of approximately `3.3e35 erg s^-1` and an outer radiative
@@ -108,8 +113,9 @@ consistently, and keeps generated files out of the source directories.
 - If the angular-momentum bracket does not straddle a smooth solution, adjust
   `hydro.log10j0` and `hydro.log10j1` in the TOML.
 - Delete `radproc/build/` after changing compilers or system dependencies, then
-  rerun the command.
-- `--no-build` runs an already compiled executable without invoking CMake.
+  rerun `./build.sh`.
+- Developers can use `python riaf_pipeline.py CONFIG --build` to rebuild and run
+  in one command. Regular model runs use the existing executable and skip CMake.
 
 Run the lightweight interface tests with `python -m unittest discover -s tests`.
 
