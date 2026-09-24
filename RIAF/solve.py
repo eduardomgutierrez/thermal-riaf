@@ -4,6 +4,7 @@
 import argparse
 import contextlib
 import io
+import json
 import os
 from pathlib import Path
 
@@ -22,6 +23,10 @@ HYDRO_PLOT_FILENAMES = (
     "eDens.pdf",
     "magf.pdf",
 )
+
+
+class _TrialStuck(Exception):
+    """Inner integration is crawling at the sonic singularity."""
 
 
 def parse_args():
@@ -121,41 +126,101 @@ def main():
         np.log(-v_out),
     )
     chatter = contextlib.nullcontext() if args.verbose else contextlib.redirect_stdout(io.StringIO())
-    with chatter:
-        eigen = root_scalar(
-            eq.bounds_beta,
-            bracket=[eq.log10j0, eq.log10j1],
-            args=initial,
-            method="toms748",
-            maxiter=30,
-        )
-    if not eigen.converged:
-        raise RuntimeError("angular-momentum eigenvalue search did not converge")
-    j = 10.0**eigen.root
+    cfg = json.loads(args.config.read_text())
+    if "eigenvalue" in cfg:
+        # The eigenvalue function is not monotonic, so a bracketed root search
+        # can land on a spurious root; a known eigenvalue can be given instead.
+        j = float(cfg["eigenvalue"])
+        print(f"using fixed angular-momentum eigenvalue j = {j:.10g}")
+    else:
+        with chatter:
+            eigen = root_scalar(
+                eq.bounds_beta,
+                bracket=[eq.log10j0, eq.log10j1],
+                args=initial,
+                method="toms748",
+                maxiter=30,
+            )
+        if not eigen.converged:
+            raise RuntimeError("angular-momentum eigenvalue search did not converge")
+        j = 10.0**eigen.root
     y0 = np.array([*initial, j])
-    with chatter:
-        outer = solve_ivp(
-            eq.rhs_beta, (np.log(eq.rOut), 0.23), y0,
-            method="LSODA", events=eq.event_beta, dense_output=True,
-        )
-    if not outer.success or not outer.t_events[0].size:
+
+    def mach(y):
+        temp_i, temp_e = np.exp(y[0])*eq.iMMW, np.exp(y[1])*eq.eMMW
+        return np.exp(y[2])/np.sqrt(eq.sqrdSoundVel(temp_i, temp_e))
+
+    log_r_in = np.log(1.1)
+    with chatter, np.errstate(all="ignore"):
+        full = solve_ivp(eq.rhs_beta, (np.log(eq.rOut), log_r_in), y0,
+                         method="LSODA", dense_output=True)
+    grid = np.linspace(np.log(eq.rOut), log_r_in, 4000)
+    supersonic = np.nonzero(mach(full.sol(grid)) >= 1.0)[0]
+    if not supersonic.size:
         raise RuntimeError("hydrodynamic integration did not reach a sonic point")
-    # Continue through the critical point by linearly extrapolating the last
-    # three accepted steps, matching the established interactive workflow.
-    back = min(3, len(outer.t) - 1)
-    if back < 1:
-        raise RuntimeError("too few integration points near the sonic radius")
-    dt = outer.t[-1] - outer.t[-1-back]
-    slope = (outer.y[:3, -1] - outer.y[:3, -1-back]) / dt
-    critical_t = outer.t[-1] + dt
-    critical_y = np.array([*(outer.y[:3, -1] + slope*dt), j])
-    with chatter:
-        inner = solve_ivp(
-            eq.rhs_beta, (critical_t, np.log(1.1)), critical_y,
-            method="LSODA", dense_output=True,
-        )
-    if not inner.success:
-        raise RuntimeError(f"inner hydrodynamic integration failed: {inner.message}")
+    log_r_sonic = grid[supersonic[0]]
+
+    # Restart inward from the sonic point, extrapolating across it by a small
+    # jump in ln r ("skipping a few steps"); accept the first restart whose
+    # solution stays supersonic down to the inner boundary.
+    slope_step = float(cfg.get("sonic_slope_step", 0.02))
+    y_sonic = full.sol(log_r_sonic)
+    slope = (full.sol(log_r_sonic + 3*slope_step)[:3] - y_sonic[:3]) / (3*slope_step)
+    inner = None
+    best_partial = None  # (t, y) of the deepest finite supersonic segment
+    for skip in cfg.get("sonic_skips", (0.02, 0.04, 0.06, 0.1, 0.15, 0.2, 0.3)):
+        start_t = log_r_sonic - skip
+        start_y = np.array([*(y_sonic[:3] - slope*skip), j])
+        calls = [0]
+
+        def rhs_capped(logr, y):
+            calls[0] += 1
+            if calls[0] > 20000:
+                raise _TrialStuck
+            return eq.rhs_beta(logr, y)
+
+        try:
+            with chatter, np.errstate(all="ignore"):
+                trial = solve_ivp(rhs_capped, (start_t, log_r_in), start_y,
+                                  method="LSODA", dense_output=True)
+        except _TrialStuck:
+            print(f"sonic skip {skip:g}: stuck at the singularity")
+            continue
+        finite = np.isfinite(trial.y).all(axis=0)
+        ok = np.cumprod(finite & (np.nan_to_num(mach(np.nan_to_num(trial.y))) > 1.0)).astype(bool)
+        if ok.sum() >= 5 and (best_partial is None or trial.t[ok][-1] < best_partial[0][-1]):
+            best_partial = (trial.t[ok], trial.y[:, ok])
+        good = (trial.success and np.isfinite(trial.y).all()
+                and trial.t[-1] <= log_r_in + 1e-6 and mach(trial.y[:, -1]) > 1.0)
+        print(f"sonic skip {skip:g}: {'accepted' if good else 'rejected'} "
+              f"(Mach at inner boundary {mach(trial.y[:, -1]):.2f})")
+        if good:
+            inner = trial
+            break
+    if inner is None:
+        # Fallback: extrapolate ln T_i, ln T_e and ln|v| linearly in ln r (power
+        # laws) from the deepest valid supersonic segment down to the inner
+        # boundary. The velocity slope is capped at free fall, v ∝ r^(-1/2).
+        if best_partial is not None:
+            seg_t, seg_y = best_partial
+        else:
+            seg_t = np.linspace(log_r_sonic + 5*slope_step, log_r_sonic, 6)
+            seg_y = full.sol(seg_t)
+        n_fit = min(8, seg_t.size)
+        slopes = [np.polyfit(seg_t[-n_fit:], seg_y[k, -n_fit:], 1)[0] for k in range(3)]
+        slopes[2] = max(slopes[2], -0.5)
+        ext_t = np.linspace(seg_t[-1], log_r_in, 30)[1:]
+        ext_y = np.array([seg_y[k, -1] + slopes[k]*(ext_t - seg_t[-1]) for k in range(3)]
+                         + [np.full_like(ext_t, j)])
+        inner = argparse.Namespace(t=np.concatenate((seg_t, ext_t)),
+                                   y=np.concatenate((seg_y, ext_y), axis=1))
+        print(f"WARNING: no restart converged; profiles extrapolated as power laws from "
+              f"r = {np.exp(seg_t[-1]):.3f} R_S to the inner boundary "
+              f"(d ln T_i/d ln r = {slopes[0]:.2f}, d ln T_e/d ln r = {slopes[1]:.2f}, "
+              f"d ln v/d ln r = {slopes[2]:.2f})")
+
+    keep = full.t > log_r_sonic
+    outer = argparse.Namespace(t=full.t[keep], y=full.y[:, keep])
 
     logr = np.flip(np.concatenate((outer.t, inner.t)))
     fields = [np.flip(np.concatenate((outer.y[i], inner.y[i]))) for i in range(3)]
@@ -171,7 +236,7 @@ def main():
     )
     plot_hydro_diagnostics(eq, j, logr, fields, args.output_dir)
     print(f"angular momentum l_in = {j:.10g}")
-    print(f"sonic radius = {np.exp(outer.t[-1]):.8g} R_S")
+    print(f"sonic radius = {np.exp(log_r_sonic):.8g} R_S")
     print(f"wrote {logr.size} radial samples to {args.output_dir}")
     print(f"wrote {len(HYDRO_PLOT_FILENAMES)} hydro diagnostic PDFs to {args.output_dir}")
 

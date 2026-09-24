@@ -693,8 +693,8 @@ def rhs_beta(logr, y):
     G = bM2 + alpha2
     H = machNumber2 * (beta*term1 - term2 + Qmin) - alpha2
 
-    I = etai
-    J = etae
+    I = 0.5*etai
+    J = 0.5*etae
     K = Qvcs
     L = -term1 + (l*l-lK*lK) / (rnorm*rnorm*cs2norm)
 
